@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Tuple
+from data_utils import remove_columns
 
 def charger_donnees(path_eval: str, path_sirh: str, path_sondage: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Charge les trois fichiers CSV"""
@@ -13,41 +14,86 @@ def charger_donnees(path_eval: str, path_sirh: str, path_sondage: str) -> Tuple[
     return df_eval, df_sirh, df_sondage
 
 
-def nettoyer_sirh(df_sirh):
-    """Nettoie le fichier SIRH"""
+def clean_sirh_data(df_sirh: pd.DataFrame) -> pd.DataFrame:
+    """
+	Nettoie le fichier SIRH
+	
+	Args:
+		df_sirh: DataFrame brut du SIRH
+		
+	Returns:
+		DataFrame nettoyé
+    """
     print("\n🧹 Nettoyage du fichier SIRH...")
     df = df_sirh.copy()
-    
-    # 1. Supprimer la colonne constante nombre_heures_travailless
-    print("   • Suppression de la colonne constante 'nombre_heures_travailless'...")
-    if 'nombre_heures_travailless' in df.columns:
-        df = df.drop(columns=['nombre_heures_travailless'])
-
-    # 2. Encoder le genre
-    print("   • Encodage du genre (0=M, 1=F)...")
-    df['genre_binaire'] = df['genre'].map({'M': 0, 'F': 1})
-    
-    # 3. One-hot encoding pour statut_marital
-    print("   • One-hot encoding du statut marital...")
-    statut_dummies = pd.get_dummies(df['statut_marital'], prefix='statut')
-    df = pd.concat([df, statut_dummies], axis=1)
-    
-    # 4. One-hot encoding pour departement
-    print("   • One-hot encoding du département...")
-    dept_dummies = pd.get_dummies(df['departement'], prefix='dept')
-    df = pd.concat([df, dept_dummies], axis=1)
-    
-    # 5. One-hot encoding pour poste
-    print("   • One-hot encoding du poste...")
-    poste_dummies = pd.get_dummies(df['poste'], prefix='poste')
-    df = pd.concat([df, poste_dummies], axis=1)
-    
-    # 6. Supprimer les colonnes originales encodées
-    colonnes_a_supprimer = ['genre', 'statut_marital', 'departement', 'poste']
-    df = df.drop(columns=colonnes_a_supprimer)
+    df = remove_columns(df, ['nombre_heures_travailless'])
     
     print(f"   ✓ Nettoyage terminé. Nouvelles dimensions: {df.shape}")
     return df
+
+
+def clean_eval_data(df_eval: pd.DataFrame) -> pd.DataFrame:
+    """Nettoie le fichier des évaluations"""
+    print("\n🧹 Nettoyage du fichier des évaluations...")
+    df = df_eval.copy()
+    df['employee_id_extracted'] = df['eval_number'].str.extract(r'E_(\d+)')[0].astype(int)
+    df['augementation_salaire_precedente'] = df['augementation_salaire_precedente'].apply(lambda x: int(x.replace('%', '').strip()))
+    df = remove_columns(df, ['eval_number'])
+    print(f"   ✓ Nettoyage terminé. Nouvelles dimensions: {df.shape}")
+    return df
+
+def clean_sondage_data(df_sondage: pd.DataFrame) -> pd.DataFrame:
+    """Nettoie le fichier des sondages"""
+    print("\n🧹 Nettoyage du fichier des sondages...")
+    df = df_sondage.copy()
+    df = remove_columns(df, ['nombre_employee_sous_responsabilite', 'ayant_enfants '])
+    print(f"   ✓ Nettoyage terminé. Nouvelles dimensions: {df.shape}")
+    return df
+
+
+
+def fusionner_datasets(df_sirh_clean, df_eval_clean, df_sondage_clean):
+    """Fusionne les trois datasets nettoyés avec validation"""
+    print("\n🔗 Fusion des datasets...")
+    
+    df_sirh_clean, df_eval_clean, df_sondage_clean = df_sirh_clean.copy(), df_eval_clean.copy(), df_sondage_clean.copy()
+    # Standardiser les noms de colonnes ID
+    df_eval_clean = df_eval_clean.rename(columns={'employee_id_extracted': 'id_employee'})
+    df_sondage_clean = df_sondage_clean.rename(columns={'code_sondage': 'id_employee'})
+    
+    # Étape 1: Fusionner EVAL et SIRH
+    print("   • Fusion ÉVALUATIONS ↔ SIRH...")
+    n_sirh, n_eval = len(df_sirh_clean), len(df_eval_clean)
+    
+    df_merged_1 = df_sirh_clean.merge(
+        df_eval_clean,
+        on='id_employee',
+        how='inner', # Garde uniquement les employés présents dans les deux datasets
+        suffixes=('_sirh', '_eval'), # Suffixes pour éviter les conflits de noms
+        validate='1:1'  # Chaque employé doit apparaître une seule fois dans chaque dataset
+    )
+    print(f"      → Résultat: {df_merged_1.shape}")
+    print(f"      → Lignes perdues: SIRH={n_sirh - df_merged_1['id_employee'].nunique()}, "
+          f"EVAL={n_eval - len(df_merged_1)}")
+    
+    # Étape 2: Fusionner avec SONDAGE
+    print("   • Fusion avec SONDAGE...")
+    n_before = len(df_merged_1)
+    
+    df_final = df_merged_1.merge(
+        df_sondage_clean,
+        on='id_employee',
+        how='inner',
+        suffixes=('', '_sondage'),
+        validate='1:1'
+    )
+    print(f"      → Résultat final: {df_final.shape}")
+    print(f"      → Lignes perdues: {n_before - len(df_final)}")
+    
+    # Vérification finale
+    print(f"\n✓ Employés uniques dans le dataset final: {df_final['id_employee'].nunique()}")
+    
+    return df_final
 
 
 def pipeline(path_eval: str, path_sirh: str, path_sondage: str, save_output=True):
