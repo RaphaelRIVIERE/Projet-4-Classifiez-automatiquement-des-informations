@@ -84,44 +84,89 @@ def plot_missing_values(missing_df: pd.DataFrame, top_n: int = 15, min_threshold
         plt.show()
     else:
         print(f"✅ Aucune colonne avec ≥ {min_threshold}% de valeurs manquantes !")
-        
 
-def analyser_types_colonnes(df: pd.DataFrame):
-    """Analyse les types de colonnes d'un DataFrame"""
-    colonnes_quanti = []
-    colonnes_quali = []
+
+def split_ml_columns(
+    df: pd.DataFrame,
+    force_qualitative=None,
+    force_ordinal=None,
+    drop_cols=None,
+    low_card_threshold=15
+):
+    """
+    Séparation des colonnes pour pipeline ML avec distinction ordinal/catégoriel
     
-    for col in df.columns:
-        dtype = df[col].dtype
-        n_unique = df[col].nunique()
-        
-        if pd.api.types.is_numeric_dtype(df[col]):
-            if n_unique <= 10 and n_unique / len(df) < 0.05:
-                desc = "Catégorielle (encodée numériquement)"
-                colonnes_quali.append((col, dtype, n_unique, desc))
-            else:
-                desc = "Quantitative continue"
-                colonnes_quanti.append((col, dtype, n_unique, desc))
-        elif pd.api.types.is_datetime64_any_dtype(df[col]):
-            desc = "Date / Temps"
-            colonnes_quali.append((col, dtype, n_unique, desc))
-        elif pd.api.types.is_bool_dtype(df[col]):
-            desc = "Booléenne"
-            colonnes_quali.append((col, dtype, n_unique, desc))
-        else:
-            desc = "Qualitative"
-            colonnes_quali.append((col, dtype, n_unique, desc))
+    Parameters:
+    -----------
+    force_qualitative : list, optional
+        Colonnes à forcer en catégoriel nominal
+    force_ordinal : list, optional
+        Colonnes à forcer en ordinal (ex: notes, satisfactions)
+    low_card_threshold : int
+        Seuil de cardinalité pour suggérer un type ordinal
+    """
     
-    # Affichage
-    print(f"\n📊 VARIABLES QUANTITATIVES ({len(colonnes_quanti)}):")
-    for col, dtype, n_unique, desc in colonnes_quanti:
-        print(f"  • {col:50s} | Type: {str(dtype):10s} | Valeurs uniques: {n_unique:5d} | {desc}")
+    force_qualitative = force_qualitative or []
+    force_ordinal = force_ordinal or []
+    drop_cols = drop_cols or []
+
+    # Numériques
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
+    # Datetime
+    datetime_cols = df.select_dtypes(include="datetime").columns.tolist()
+
+    # Catégorielles naturelles (nominal)
+    categorical_cols = df.select_dtypes(
+        include=["object", "category", "bool"]
+    ).columns.tolist()
+
+    # Numériques à faible cardinalité → ORDINAL potentiel
+    low_card_numeric = [
+        col for col in numeric_cols
+        if df[col].nunique() <= low_card_threshold
+        and col not in force_qualitative
+    ]
+
+    # Classification finale
+    ordinal = sorted(set(low_card_numeric + force_ordinal) - set(drop_cols))
     
-    print(f"\n📝 VARIABLES QUALITATIVES ({len(colonnes_quali)}):")
-    for col, dtype, n_unique, desc in colonnes_quali:
-        print(f"  • {col:50s} | Type: {str(dtype):10s} | Valeurs uniques: {n_unique:5d} | {desc}")
+    qualitative = sorted(
+        set(categorical_cols + force_qualitative) - set(ordinal) - set(drop_cols)
+    )
     
-    return colonnes_quanti, colonnes_quali
+    quantitative = sorted([
+        col for col in numeric_cols
+        if col not in ordinal 
+        and col not in qualitative 
+        and col not in drop_cols
+    ])
+
+    return {
+        "quantitative": quantitative,
+        "qualitative": qualitative,
+        "ordinal": ordinal,
+        "datetime": sorted(datetime_cols),
+        "drop": drop_cols
+    }
+
+def check_duplicates(df: pd.DataFrame, subset=None):
+    """
+    Vérifie les doublons dans un DataFrame.
+    """
+
+    total_rows = len(df)
+    duplicate_rows = df.duplicated(subset=subset).sum()
+
+    return {
+        "subset": subset if subset is not None else "all_columns",
+        "total_rows": total_rows,
+        "duplicate_rows": duplicate_rows,
+        "duplicate_ratio": duplicate_rows / total_rows if total_rows > 0 else 0
+    }
+
+
+
 
 def explore_dataframe(df: pd.DataFrame, show_missing: bool=True):
     """
@@ -158,9 +203,22 @@ def explore_dataframe(df: pd.DataFrame, show_missing: bool=True):
     missing_stats = analyze_missing_values(df)
     if show_missing:
         display(missing_stats)
+    
+    col_types = split_ml_columns(df)
 
-    analyser_types_colonnes(df)
-   
+    print("\n=== CLASSIFICATION DES VARIABLES ===")
+    print(f"📊 QUANTITATIVES ({len(col_types['quantitative'])}): {col_types['quantitative']}")
+    print(f"🔢 ORDINALES ({len(col_types['ordinal'])}): {col_types['ordinal']}")
+    print(f"🏷️ QUALITATIVES ({len(col_types['qualitative'])}): {col_types['qualitative']}")
+    print(f"📅 DATETIME ({len(col_types['datetime'])}): {col_types['datetime']}")
+    
+
+    dup_info = check_duplicates(df)
+
+    print(f"Nombre total de lignes : {dup_info['total_rows']}")
+    print(f"Lignes dupliquées      : {dup_info['duplicate_rows']}")
+    print(f"Taux de doublons       : {dup_info['duplicate_ratio']:.2%}")
+
 
 
 def distribution_column(
@@ -335,4 +393,54 @@ def remove_columns(
     return df
 
 
-
+def compare_group_means(
+	df: pd.DataFrame,
+	target_col: str, 
+	quanti_cols: list[str], 
+	group_labels: dict[int | str, str] | None = None, 
+	sort_by_gap: bool = True,
+	decimals: int = 2
+) -> pd.DataFrame:
+    """
+    Compare les moyennes de variables quantitatives entre groupes définis par une variable cible.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame contenant les données
+    target_col : str
+        Nom de la colonne cible (variable de groupement)
+    quanti_cols : list
+        Liste des colonnes quantitatives à comparer
+    group_labels : dict, optional
+        Dictionnaire pour renommer les groupes {valeur_originale: nouveau_label}
+        Ex: {0: 'Restés (Non)', 1: 'Partis (Oui)'}
+    sort_by_gap : bool, default=True
+        Si True, trie les résultats par écart absolu décroissant
+    decimales : int, default=2
+        Nombre de décimales pour l'arrondi final
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame avec les moyennes par groupe et l'écart en %
+    """
+    # Calculer les moyennes par groupe
+    comparison = df.groupby(target_col)[quanti_cols].mean().T
+    
+    # Renommer les colonnes si labels fournis
+    if group_labels:
+        comparison.columns = [group_labels.get(col, col) for col in comparison.columns]
+    
+    # Calculer l'écart en % entre les deux groupes (suppose 2 groupes)
+    cols = comparison.columns
+    comparison['Écart (%)'] = (
+        (comparison[cols[1]] - comparison[cols[0]]) / comparison[cols[0]] * 100
+    ).round(1)
+    
+    # Trier par écart absolu si demandé
+    if sort_by_gap:
+        comparison = comparison.sort_values('Écart (%)', key=abs, ascending=False)
+    
+    # Arrondir le résultat final
+    return comparison.round(decimals)
