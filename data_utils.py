@@ -184,40 +184,31 @@ def explore_dataframe(df: pd.DataFrame, show_missing: bool=True):
     show_missing : bool, optional
         Affiche l'analyse des valeurs manquantes (default=True)
     """
-    # Informations générales
-    print(f"\n📋 Informations générales:")
-    print(f"  • Nombre de lignes: {df.shape[0]}")
-    print(f"  • Nombre de colonnes: {df.shape[1]}")
-    print(f"  • Taille mémoire: {df.memory_usage(deep=True).sum() / 1024:.2f} KB")
-    
-    print("\n--- HEAD ---")
-    display(df.head())
-    
+    print("📋 INFORMATIONS GÉNÉRALES")
+    print(f"• Lignes    : {df.shape[0]}")
+    print(f"• Colonnes : {df.shape[1]}")
+
     print("\n--- INFO ---")
     df.info()
     
     print("\n--- DESCRIBE ---")
     display(df.describe())
-    
+
     print("\n--- MISSING VALUES ---")
     missing_stats = analyze_missing_values(df)
     if show_missing:
         display(missing_stats)
-    
-    col_types = split_ml_columns(df)
 
+    col_types = split_ml_columns(df)
     print("\n=== CLASSIFICATION DES VARIABLES ===")
-    print(f"📊 QUANTITATIVES ({len(col_types['quantitative'])}): {col_types['quantitative']}")
-    print(f"🔢 ORDINALES ({len(col_types['ordinal'])}): {col_types['ordinal']}")
-    print(f"🏷️ QUALITATIVES ({len(col_types['qualitative'])}): {col_types['qualitative']}")
-    print(f"📅 DATETIME ({len(col_types['datetime'])}): {col_types['datetime']}")
-    
+    for k, v in col_types.items():
+        print(f"{k.upper():<12} ({len(v)}): {v}")
 
     dup_info = check_duplicates(df)
-
-    print(f"Nombre total de lignes : {dup_info['total_rows']}")
-    print(f"Lignes dupliquées      : {dup_info['duplicate_rows']}")
-    print(f"Taux de doublons       : {dup_info['duplicate_ratio']:.2%}")
+    print("\n=== DUPLICATES ===")
+    print(f"Lignes totales  : {dup_info['total_rows']}")
+    print(f"Lignes dupliquées: {dup_info['duplicate_rows']}")
+    print(f"Taux            : {dup_info['duplicate_ratio']:.2%}")
 
 
 

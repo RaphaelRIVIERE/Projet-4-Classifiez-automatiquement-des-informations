@@ -1,8 +1,9 @@
 import pandas as pd
 import seaborn as sns
 import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.container import BarContainer
+from typing import Literal
+
 
 
 def _apply_formatting(ax, title=None, xlabel=None, ylabel=None,
@@ -42,7 +43,7 @@ def create_barplot(df, ax, x, y=None, hue=None, title=None, xlabel=None,
                    ylabel=None, xticks=45, palette=None, legend=None,
                    annot=True, alpha=1.0, edgecolor=None, linewidth=0.0,
                    width=0.8, errorbar=None, estimator='mean',
-                   ylim_margin=1.15, **kwargs):
+                   ylim_margin=1.15):
     """Cree un barplot ou un countplot."""
     if y is None:
         sns.countplot(data=df, x=x, hue=hue, palette=palette, ax=ax,
@@ -67,7 +68,7 @@ def create_barplot(df, ax, x, y=None, hue=None, title=None, xlabel=None,
 def create_boxplot(df, ax, x=None, y=None, hue=None, title=None,
                    xlabel=None, ylabel=None, xticks=None, palette=None,
                    legend=None, log_scale=False, showfliers=True,
-                   width=0.8, linewidth=1.5, **kwargs):
+                   width=0.8, linewidth=1.5):
     """Cree un boxplot."""
     sns.boxplot(data=df, x=x, y=y, hue=hue, ax=ax, palette=palette,
                 showfliers=showfliers, width=width, linewidth=linewidth)
@@ -86,35 +87,171 @@ def create_boxplot(df, ax, x=None, y=None, hue=None, title=None,
                       show_legend=(hue is not None))
 
 
-def create_scatterplot(df, ax, x, y, hue=None, size=None, style=None,
-                       title=None, xlabel=None, ylabel=None, palette=None,
-                       color=None, alpha=0.7, s=None, edgecolor=None,
-                       linewidth=0.5, marker='o', regression=False,
-                       regression_kwargs=None, **kwargs):
-    """Cree un scatterplot avec regression lineaire optionnelle."""
-    if size is None and s is None:
-        s = 36
+def create_scatterplot(
+    df, ax, x, y,
+    hue=None, size=None, style=None,
+    title=None, xlabel=None, ylabel=None,
+    palette=None, color=None,
+    alpha=None, s=None,
+    edgecolor=None, linewidth=0,
+    marker='o',
+    regression=False,
+    annotate_stats=False,
+    grid=False,
+    legend_title=None
+):
+    """
+    Scatterplot Seaborn avec :
+    - réduction du sur-plotting
+    - jitter optionnel
+    - régression linéaire (globale ou par hue)
+    Compatible avec _apply_formatting (OpenClassrooms safe)
+    """
 
-    sns.scatterplot(data=df, x=x, y=y, hue=hue, size=size, style=style,
-                    ax=ax,
-                    palette=palette if hue else None,
-                    color=color if not hue else None,
-                    alpha=alpha, s=s, edgecolor=edgecolor,
-                    linewidth=linewidth, marker=marker)
+    if s is None:
+        s = 25
+
+    if alpha is None:
+        alpha = min(0.6, 500 / max(len(df), 1))
+
+    plot_df = df.copy()
+
+
+    sns.scatterplot(
+        data=plot_df,
+        x=x, y=y,
+        hue=hue, size=size, style=style,
+        ax=ax,
+        palette=palette if hue else None,
+        color=color if not hue else None,
+        alpha=alpha,
+        s=s,
+        edgecolor=edgecolor,
+        linewidth=linewidth,
+        marker=marker
+    )
+
 
     if regression:
-        x_data, y_data = df[x], df[y]
-        mask = x_data.notna() & y_data.notna()
-        x_clean, y_clean = x_data[mask], y_data[mask]
+        groups = [(None, plot_df)] if not hue else plot_df.groupby(hue)
 
-        if len(x_clean) >= 2:
-            slope, intercept = np.polyfit(x_clean, y_clean, deg=1)
-            x_line = np.linspace(x_clean.min(), x_clean.max(), 100)
-            y_line = slope * x_line + intercept
-            default_kwargs = {'color': 'black', 'linestyle': '--',
-                              'linewidth': 1.5, 'label': 'Regression lineaire'}
-            ax.plot(x_line, y_line, **(regression_kwargs or default_kwargs))
+        for name, group in groups:
+            x_clean = group[x].dropna()
+            y_clean = group.loc[x_clean.index, y].dropna()
+
+            if len(x_clean) < 2:
+                continue
+
+            slope, intercept = np.polyfit(x_clean, y_clean, 1)
+            x_vals = np.linspace(x_clean.min(), x_clean.max(), 200)
+            y_vals = slope * x_vals + intercept
+
+            ax.plot(
+                x_vals, y_vals,
+                linestyle='--',
+                linewidth=2,
+                label=f"Régression ({name})" if name is not None else "Régression"
+            )
+
+            if annotate_stats:
+                r = np.corrcoef(x_clean, y_clean)[0, 1]
+                ax.text(
+                    0.02,
+                    0.95 if name is None else 0.90,
+                    f"{name}: r = {r:.2f}" if name else f"r = {r:.2f}",
+                    transform=ax.transAxes,
+                    fontsize=10,
+                    verticalalignment='top'
+                )
+
+    _apply_formatting(
+        ax,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        grid=grid,
+        legend_title=legend_title,
+        show_legend=(hue is not None or size is not None
+                     or style is not None or regression)
+    )
+
+
+def create_heatmap(df, ax, annot=True, fmt='.2f', cmap='coolwarm',
+                   title=None, xlabel=None, ylabel=None,
+                   xticks=45, yticks=0, linewidths=0.5, linecolor='white',
+                   vmin=None, vmax=None, center=None,
+                   cbar=True, square=False, mask=None):
+    """Cree une heatmap."""
+    sns.heatmap(data=df, ax=ax, annot=annot, fmt=fmt, cmap=cmap,
+                linewidths=linewidths, linecolor=linecolor,
+                vmin=vmin, vmax=vmax, center=center,
+                cbar=cbar, square=square, mask=mask)
+
+    xticks_rotation = xticks if isinstance(xticks, int) else 0
+    yticks_rotation = yticks if isinstance(yticks, int) else 0
 
     _apply_formatting(ax, title=title, xlabel=xlabel, ylabel=ylabel,
-                      show_legend=(hue is not None or size is not None
-                                   or style is not None or regression))
+                      xticks_rotation=xticks_rotation,
+                      yticks_rotation=yticks_rotation)
+
+
+
+def plot_contingency_analysis(
+    df,
+    *,
+    rows,
+    cols,
+    axes,
+    normalize: Literal['index', 'columns', 'all', 0, 1] = 'index',
+    heatmap_title=None,
+    barplot_title=None,
+    xlabel=None,
+    ylabel=None,
+    legend_title=None,
+):
+    """
+    Analyse de contingence avec heatmap (brute) et barplot (normalisé).
+    
+    Parameters
+    ----------
+    df : DataFrame
+    rows : str - Variable en lignes
+    cols : str - Variable en colonnes
+    axes : array - Tableau de 2 axes matplotlib
+    normalize : str - Type de normalisation ('index', 'columns', 'all')
+    """
+    assert len(axes) == 2, "axes doit contenir exactement 2 sous-graphiques"
+    
+    # Nettoyage
+    df_clean = df[[rows, cols]].dropna()
+    
+    # Tables de contingence
+    contingency = pd.crosstab(df_clean[rows], df_clean[cols])
+    ct_norm = pd.crosstab(df_clean[cols], df_clean[rows], normalize=normalize) * 100
+    ct_long = ct_norm.reset_index().melt(
+        id_vars=cols,
+        var_name=rows,
+        value_name='pourcentage'
+    )
+    
+    # Heatmap (distribution brute)
+    create_heatmap(
+        contingency,
+        axes[0],
+        title=heatmap_title,
+        xlabel=xlabel or cols,
+        ylabel=ylabel or rows,
+    )
+    
+    # Barplot (répartition conditionnelle %)
+    create_barplot(
+        ct_long,
+        axes[1],
+        x=cols,
+        y='pourcentage',
+        hue=rows,
+        title=barplot_title,
+        legend=legend_title or rows,
+        xlabel=xlabel or cols,
+        ylabel="Pourcentage"
+    )

@@ -38,7 +38,9 @@ def clean_eval_data(df_eval: pd.DataFrame) -> pd.DataFrame:
     df = df_eval.copy()
     df['employee_id_extracted'] = df['eval_number'].str.extract(r'E_(\d+)')[0].astype(int)
     df['augementation_salaire_precedente'] = df['augementation_salaire_precedente'].apply(lambda x: int(x.replace('%', '').strip()))
-    df = remove_columns(df, ['eval_number'])
+    df['augmentation_salaire_precedente'] = df['augementation_salaire_precedente']
+
+    df = remove_columns(df, ['eval_number', 'augementation_salaire_precedente'])
     print(f"   ✓ Nettoyage terminé. Nouvelles dimensions: {df.shape}")
     return df
 
@@ -52,7 +54,7 @@ def clean_sondage_data(df_sondage: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def fusionner_datasets(df_sirh_clean, df_eval_clean, df_sondage_clean):
+def fusionner_datasets(df_sirh_clean: pd.DataFrame, df_eval_clean: pd.DataFrame, df_sondage_clean: pd.DataFrame):
     """Fusionne les trois datasets nettoyés avec validation"""
     print("\n🔗 Fusion des datasets...")
     
