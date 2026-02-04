@@ -255,3 +255,46 @@ def plot_contingency_analysis(
         xlabel=xlabel or cols,
         ylabel="Pourcentage"
     )
+
+
+def create_pairplot(df, columns, hue=None, title=None,
+                    palette=None, legend=None,
+                    xticks=0, yticks=0, grid=False,
+                    diag_kind: Literal['auto', 'hist', 'kde'] = 'kde', alpha=0.4, s=15, corner=True):
+    """Cree un pairplot Seaborn.
+
+    Retourne l'objet PairGrid pour permettre des ajustements ulterieurs.
+    """
+    
+
+    g = sns.pairplot(
+        df[columns],
+        hue=hue,
+        palette=palette,
+        diag_kind=diag_kind,
+        plot_kws={'alpha': alpha, 's': s},
+        corner=corner,
+    )
+
+    xticks_rotation = xticks if isinstance(xticks, int) else 0
+    yticks_rotation = yticks if isinstance(yticks, int) else 0
+    legend_title = legend if isinstance(legend, str) else None
+
+    for ax in g.axes.flat:
+        if ax is not None:
+            _apply_formatting(
+                ax,
+                xticks_rotation=xticks_rotation,
+                yticks_rotation=yticks_rotation,
+                grid=grid,
+                legend_title=legend_title,
+                show_legend=False,
+            )
+
+    if title:
+        g.figure.suptitle(title, y=1.02, fontsize=14, fontweight='bold')
+
+    if hue is not None and g.legend is not None and legend_title:
+        g.legend.set_title(legend_title)
+
+    return g
