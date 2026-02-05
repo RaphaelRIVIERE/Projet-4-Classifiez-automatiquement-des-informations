@@ -162,43 +162,59 @@ def remove_redundant_columns(df: pd.DataFrame) -> pd.DataFrame:
         'annees_dans_le_poste_actuel',
         'annees_sous_responsable_actuel',
         'annees_depuis_la_derniere_promotion',
+        'departement'
     ])
 
     return df
 
 
 
-def prepare_ml_data(df: pd.DataFrame, target: str) -> Tuple[pd.DataFrame, pd.Series, ColumnTransformer]:
+def prepare_ml_data(
+    df: pd.DataFrame,
+    target: str,
+    binary_ordinal_features: list = None
+) -> Tuple[pd.DataFrame, pd.Series, ColumnTransformer]:
     """
     Prépare les données pour le ML : sépare X/y, encode la cible, crée le preprocessor.
-    
+
     Args:
         df: DataFrame avec features + target
         target: Nom de la colonne cible (valeurs "Non"/"Oui")
-    
+        binary_ordinal_features: Liste des colonnes binaires/ordinales à ne pas scaler.
+                                 Ces features passent en 'passthrough' dans le preprocessor.
+
     Returns:
         X: Features
         y: Target encodée (0/1)
         preprocessor: Pipeline de transformation
     """
+    if binary_ordinal_features is None:
+        binary_ordinal_features = []
+
     # Séparation features/target
     X = df.drop(columns=[target])
     y = df[target].map({"Non": 0, "Oui": 1})
-    
+
     # Vérifications
     assert X.isna().sum().sum() == 0, "Il reste des valeurs manquantes dans X"
     assert y.notna().all(), f"Des valeurs de '{target}' n'ont pas été encodées"
-    
-    # Identification automatique des types
-    numeric_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+
+    # Identification des types de features
     categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
-    
+    numeric_features = [
+        col for col in X.select_dtypes(include=['int64', 'float64']).columns
+        if col not in binary_ordinal_features
+    ]
+
     # Création du preprocessor
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', StandardScaler(), numeric_features),
-            ('cat', OneHotEncoder(drop='first', handle_unknown='ignore'), categorical_features)
-        ]
-    )
-    
+    transformers = [
+        ('num', StandardScaler(), numeric_features),
+        ('cat', OneHotEncoder(drop='first', handle_unknown='ignore'), categorical_features)
+    ]
+
+    if binary_ordinal_features:
+        transformers.append(('bin_ord', 'passthrough', binary_ordinal_features))
+
+    preprocessor = ColumnTransformer(transformers=transformers)
+
     return X, y, preprocessor
