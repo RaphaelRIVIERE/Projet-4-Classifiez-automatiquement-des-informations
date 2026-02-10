@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, List
 from data_utils import remove_columns
 #Preprocess
 from sklearn.compose import ColumnTransformer
@@ -134,7 +134,7 @@ def features_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df['age_debut_carriere'] = df['age'] - df['annee_experience_totale']
 
     # Ratio temps sous responsable actuel / temps dans le poste
-    df['stabilite_management'] = df['annees_sous_responsable_actuel'] / (df['annees_dans_le_poste_actuel'] + 1)
+    # df['stabilite_management'] = df['annees_sous_responsable_actuel'] / (df['annees_dans_le_poste_actuel'] + 1)
 
     #####  Features de satisfaction et engagement
 
@@ -148,7 +148,7 @@ def features_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df['score_satisfaction_global'] = df[satisfaction_cols].mean(axis=1)
 
     # Engagement formation
-    df['engagement_formation'] = df['nb_formations_suivies'] / (df['annees_dans_l_entreprise'] + 1)
+    # df['engagement_formation'] = df['nb_formations_suivies'] / (df['annees_dans_l_entreprise'] + 1)
 
 
     return df
@@ -159,9 +159,10 @@ def remove_redundant_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = remove_columns(df, [
         'niveau_hierarchique_poste',
-        'annees_dans_le_poste_actuel',
-        'annees_sous_responsable_actuel',
-        'annees_depuis_la_derniere_promotion',
+        'annees_dans_l_entreprise',
+        # 'annees_dans_le_poste_actuel',
+        # 'annees_sous_responsable_actuel',
+        # 'annees_depuis_la_derniere_promotion',
         'departement'
     ])
 
@@ -172,7 +173,7 @@ def remove_redundant_columns(df: pd.DataFrame) -> pd.DataFrame:
 def prepare_ml_data(
     df: pd.DataFrame,
     target: str,
-    binary_ordinal_features: list = None
+    binary_ordinal_features: List = []
 ) -> Tuple[pd.DataFrame, pd.Series, ColumnTransformer]:
     """
     Prépare les données pour le ML : sépare X/y, encode la cible, crée le preprocessor.
@@ -188,8 +189,6 @@ def prepare_ml_data(
         y: Target encodée (0/1)
         preprocessor: Pipeline de transformation
     """
-    if binary_ordinal_features is None:
-        binary_ordinal_features = []
 
     # Séparation features/target
     X = df.drop(columns=[target])

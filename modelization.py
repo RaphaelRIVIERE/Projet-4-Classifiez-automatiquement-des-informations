@@ -1,5 +1,8 @@
 from sklearn.model_selection import cross_validate
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import (
+    classification_report, confusion_matrix,
+    average_precision_score, roc_auc_score
+)
 import matplotlib.pyplot as plt
 import pandas as pd
 import time
@@ -79,26 +82,17 @@ def cross_validate_model(pipeline, X_train, y_train, cv, scoring):
 
 
 def evaluate_model(pipeline, X_train, y_train, X_test, y_test):
-    """
-    Entraîne un pipeline sur le train et évalue sur le jeu de validation.
-
-    Parameters
-    ----------
-    pipeline : sklearn.pipeline.Pipeline
-        Pipeline non entraîné (sera fit ici).
-    X_train, y_train : données d'entraînement.
-    X_test, y_test : données de validation.
-
-    Returns
-    -------
-    dict avec les clés :
-        - 'pipeline' : le pipeline entraîné
-        - 'y_pred' : prédictions sur X_test
-        - 'report' : dict du classification_report (per-class + macro/weighted)
-        - 'confusion_matrix' : matrice de confusion (np.array)
-    """
     pipeline.fit(X_train, y_train)
     y_pred = pipeline.predict(X_test)
+
+    # Probabilités (si disponibles)
+    y_proba = None
+    pr_auc = None
+    roc_auc = None
+    if hasattr(pipeline, 'predict_proba'):
+        y_proba = pipeline.predict_proba(X_test)[:, 1]
+        pr_auc = average_precision_score(y_test, y_proba)
+        roc_auc = roc_auc_score(y_test, y_proba)
 
     report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
     cm = confusion_matrix(y_test, y_pred)
@@ -106,8 +100,11 @@ def evaluate_model(pipeline, X_train, y_train, X_test, y_test):
     return {
         'pipeline': pipeline,
         'y_pred': y_pred,
+        'y_proba': y_proba,
         'report': report,
         'confusion_matrix': cm,
+        'pr_auc': pr_auc,
+        'roc_auc': roc_auc,
     }
 
 
@@ -150,6 +147,8 @@ def build_comparison_df(all_cv_results=None, all_eval_results=None):
             row['cv_time_sec'] = cv.get('training_time_sec')
 
         # Métriques sur le jeu de test (per-class sur la classe positive "Quitte")
+        # Dans modelization.py — build_comparison_df, à la fin du bloc "ev"
+
         ev = all_eval_results.get(model_name)
         if ev and ev.get('report'):
             report = ev['report']
@@ -158,6 +157,9 @@ def build_comparison_df(all_cv_results=None, all_eval_results=None):
             row['test_precision'] = positive_class.get('precision')
             row['test_recall'] = positive_class.get('recall')
             row['test_f1'] = positive_class.get('f1-score')
+            row['test_pr_auc'] = ev.get('pr_auc')       # NOUVEAU
+            row['test_roc_auc'] = ev.get('roc_auc')      # NOUVEAU
+
 
         rows.append(row)
 

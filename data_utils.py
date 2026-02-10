@@ -435,3 +435,60 @@ def compare_group_means(
     
     # Arrondir le résultat final
     return comparison.round(decimals)
+
+
+
+def show_outliers(df, colonne, plot=False):
+    """Affiche simplement les outliers d'une colonne"""
+    import visualizer as vis
+    import matplotlib.pyplot as plt
+    
+    # Calculer les bornes
+    Q1 = df[colonne].quantile(0.25)
+    Q3 = df[colonne].quantile(0.75)
+    IQR = Q3 - Q1
+    borne_inf = Q1 - 1.5 * IQR
+    borne_sup = Q3 + 1.5 * IQR
+    
+    # Trouver les outliers
+    outliers = df[(df[colonne] < borne_inf) | (df[colonne] > borne_sup)]
+    
+    # Afficher
+    print(f"\n{'='*60}")
+    print(f"OUTLIERS : {colonne}")
+    print(f"{'='*60}")
+    print(f"Borne inférieure : {borne_inf:.2f}")
+    print(f"Borne supérieure : {borne_sup:.2f}")
+    print(f"\nNombre d'outliers : {len(outliers)} sur {len(df)} ({len(outliers)/len(df)*100:.1f}%)")
+    
+    # Visualisation optionnelle
+    if plot:
+        import seaborn as sns
+        _, axes = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Boxplot via visualizer
+        vis.create_boxplot(
+            df, axes[0],
+            y=colonne,
+            title=f'Boxplot - {colonne}',
+            ylabel=colonne
+        )
+        axes[0].axhline(borne_sup, color='red', linestyle='--', alpha=0.7)
+        axes[0].axhline(borne_inf, color='red', linestyle='--', alpha=0.7)
+        
+        # Histogramme avec style cohérent
+        sns.histplot(df[colonne], bins=30, ax=axes[1], alpha=0.7)
+        axes[1].axvline(borne_sup, color='red', linestyle='--', alpha=0.7, label='Bornes IQR')
+        axes[1].axvline(borne_inf, color='red', linestyle='--', alpha=0.7)
+        vis._apply_formatting(
+            axes[1],
+            title=f'Distribution - {colonne}',
+            xlabel=colonne,
+            ylabel='Fréquence'
+        )
+        axes[1].legend()
+        
+        plt.tight_layout()
+        plt.show()
+    
+    return outliers

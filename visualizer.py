@@ -298,3 +298,107 @@ def create_pairplot(df, columns, hue=None, title=None,
         g.legend.set_title(legend_title)
 
     return g
+
+
+def plot_metrics_comparison(df_results, ax, metric_cols=None, title=None,
+                            figsize=(14, 6)):
+    """
+    Barplot groupé comparant plusieurs métriques pour chaque modèle.
+
+    Parameters
+    ----------
+    df_results : pd.DataFrame
+        DataFrame indexé par le nom du modèle, avec des colonnes de métriques.
+    ax : matplotlib.axes.Axes
+        Axe sur lequel dessiner.
+    metric_cols : dict | None
+        Mapping {nom_colonne: label_affiché}.
+        Par défaut : Precision, Recall, F1, PR-AUC, ROC-AUC.
+    title : str | None
+        Titre du graphique.
+    """
+    if metric_cols is None:
+        metric_cols = {
+            'test_precision': 'Precision',
+            'test_recall': 'Recall',
+            'test_f1': 'F1',
+            'test_pr_auc': 'PR-AUC',
+            'test_roc_auc': 'ROC-AUC',
+        }
+
+    rows = []
+    for model in df_results.index:
+        for col, label in metric_cols.items():
+            rows.append({
+                'model': model,
+                'metric': label,
+                'score': df_results.loc[model, col],
+            })
+
+    df_long = pd.DataFrame(rows)
+
+    create_barplot(
+        df_long, ax, x='model', y='score', hue='metric',
+        title=title,
+    )
+
+
+def visualize_cv_results(axes, all_cv_results, df_all_results, metric='f1'):
+    """
+    Visualise les résultats de cross-validation avec deux graphiques :
+    - Distribution des scores par fold
+    - Comparaison train vs test pour détecter l'overfitting
+    
+    Parameters
+    ----------
+    all_cv_results : dict
+        Dictionnaire contenant les résultats CV pour chaque modèle
+        Format: {model_name: {'cv_results': {'test_metric': [scores]}}}
+    df_all_results : pd.DataFrame
+        DataFrame avec les colonnes 'cv_train_{metric}' et 'cv_test_{metric}'
+        et un index 'model'
+    metric : str, default='f1'
+        Métrique à visualiser (f1, accuracy, precision, recall, etc.)
+    figsize : tuple, default=(12, 8)
+        Taille de la figure
+    
+    Returns
+    -------
+    fig, ax : matplotlib objects
+        Figure et axes pour personnalisation ultérieure si besoin
+    """
+    # Préparer les données pour le boxplot (distribution par fold)
+    rows = []
+    for name, res in all_cv_results.items():
+        test_key = f'test_{metric}'
+        if test_key in res['cv_results']:
+            for score in res['cv_results'][test_key]:
+                rows.append({'model': name, f'{metric}_score': score})
+    
+    df_cv_folds = pd.DataFrame(rows)
+    
+    # Préparer les données pour le barplot (train vs test)
+    train_col = f'cv_train_{metric}'
+    test_col = f'cv_test_{metric}'
+    
+    df_overfit = df_all_results[[train_col, test_col]].reset_index().melt(
+        id_vars='model', 
+        var_name='set', 
+        value_name=f'{metric}_score'
+    )
+    
+    create_boxplot(
+        df_cv_folds, axes[0], 
+        x='model', 
+        y=f'{metric}_score',
+        title=f'Distribution du {metric.upper()}-score par fold (CV)', 
+        ylabel=f'{metric.upper()}-score'
+    )
+    
+    create_barplot(
+        df_overfit, axes[1], 
+        x='model', 
+        y=f'{metric}_score', 
+        hue='set',
+        title=f'{metric.upper()}-score Train vs Test (diagnostic overfitting)'
+    )
