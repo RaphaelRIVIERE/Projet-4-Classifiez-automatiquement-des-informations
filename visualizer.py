@@ -1,8 +1,10 @@
 import pandas as pd
 import seaborn as sns
 import numpy as np
+import matplotlib.pyplot as plt
 from matplotlib.container import BarContainer
 from typing import Literal
+from sklearn.metrics import RocCurveDisplay, PrecisionRecallDisplay
 
 
 
@@ -343,12 +345,12 @@ def plot_metrics_comparison(df_results, ax, metric_cols=None, title=None,
     )
 
 
-def visualize_cv_results(axes, all_cv_results, df_all_results, metric='f1'):
+def visualize_cv_results(all_cv_results, df_all_results, metric='f1', suffix=None):
     """
     Visualise les résultats de cross-validation avec deux graphiques :
     - Distribution des scores par fold
     - Comparaison train vs test pour détecter l'overfitting
-    
+
     Parameters
     ----------
     all_cv_results : dict
@@ -359,14 +361,13 @@ def visualize_cv_results(axes, all_cv_results, df_all_results, metric='f1'):
         et un index 'model'
     metric : str, default='f1'
         Métrique à visualiser (f1, accuracy, precision, recall, etc.)
-    figsize : tuple, default=(12, 8)
-        Taille de la figure
-    
-    Returns
-    -------
-    fig, ax : matplotlib objects
-        Figure et axes pour personnalisation ultérieure si besoin
+    suffix : str, optional
+        Suffixe ajouté aux titres (ex: "balanced", "SMOTE").
     """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    label = metric.upper().replace('_', '-')
+    suffix_str = f" — {suffix}" if suffix else ""
+
     # Préparer les données pour le boxplot (distribution par fold)
     rows = []
     for name, res in all_cv_results.items():
@@ -374,31 +375,261 @@ def visualize_cv_results(axes, all_cv_results, df_all_results, metric='f1'):
         if test_key in res['cv_results']:
             for score in res['cv_results'][test_key]:
                 rows.append({'model': name, f'{metric}_score': score})
-    
+
     df_cv_folds = pd.DataFrame(rows)
-    
+
     # Préparer les données pour le barplot (train vs test)
     train_col = f'cv_train_{metric}'
     test_col = f'cv_test_{metric}'
-    
+
     df_overfit = df_all_results[[train_col, test_col]].reset_index().melt(
-        id_vars='model', 
-        var_name='set', 
+        id_vars='model',
+        var_name='set',
         value_name=f'{metric}_score'
     )
-    
+
     create_boxplot(
-        df_cv_folds, axes[0], 
-        x='model', 
+        df_cv_folds, axes[0],
+        x='model',
         y=f'{metric}_score',
-        title=f'Distribution du {metric.upper()}-score par fold (CV)', 
-        ylabel=f'{metric.upper()}-score'
+        title=f'Distribution {label} par fold (CV){suffix_str}',
+        ylabel=label
     )
-    
+
     create_barplot(
-        df_overfit, axes[1], 
-        x='model', 
-        y=f'{metric}_score', 
+        df_overfit, axes[1],
+        x='model',
+        y=f'{metric}_score',
         hue='set',
-        title=f'{metric.upper()}-score Train vs Test (diagnostic overfitting)'
+        title=f'{label} Train vs Test (diagnostic overfitting){suffix_str}'
     )
+
+    plt.tight_layout()
+    plt.show()
+    
+
+
+
+def plot_pr_curves(all_eval_results, y_test, title="Courbes Précision–Rappel"):
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for name, res in all_eval_results.items():
+        y_proba = res.get("y_proba")
+        if y_proba is None:
+            continue
+
+        PrecisionRecallDisplay.from_predictions(
+            y_test,
+            y_proba,
+            name=f"{name} (AP={res['pr_auc']:.3f})",
+            ax=ax
+        )
+
+    prevalence = y_test.mean()
+    ax.axhline(
+        y=prevalence,
+        linestyle="--",
+        color="grey",
+        label=f"Prévalence ({prevalence:.1%})"
+    )
+
+    ax.set_title(title)
+    ax.legend(loc="upper right")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_roc_curves(all_eval_results, y_test, title="Courbes ROC"):
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    for name, res in all_eval_results.items():
+        y_proba = res.get("y_proba")
+        if y_proba is None:
+            continue
+
+        RocCurveDisplay.from_predictions(
+            y_test,
+            y_proba,
+            name=f"{name} (AUC={res['roc_auc']:.3f})",
+            ax=ax
+        )
+
+    ax.plot([0, 1], [0, 1], "grey", linestyle="--", label="Aléatoire")
+
+    ax.set_title(title)
+    ax.legend(loc="lower right")
+    plt.tight_layout()
+    plt.show()
+
+
+
+def plot_roc_pr_curves(all_eval_results, y_test, suptitle="ROC vs PR"):
+    """
+    Trace les courbes ROC et Precision-Recall côte à côte pour tous les modèles.
+
+    Parameters
+    ----------
+    all_eval_results : dict
+        {model_name: {'y_proba': array, 'roc_auc': float, 'pr_auc': float}}
+    y_test : array-like
+        Vraies étiquettes du jeu de test.
+    suptitle : str
+        Titre principal de la figure.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    for name, res in all_eval_results.items():
+        y_proba = res.get('y_proba')
+        if y_proba is None:
+            continue
+
+        RocCurveDisplay.from_predictions(
+            y_test, y_proba,
+            name=f"{name} (AUC={res['roc_auc']:.3f})",
+            ax=axes[0]
+        )
+        PrecisionRecallDisplay.from_predictions(
+            y_test, y_proba,
+            name=f"{name} (AP={res['pr_auc']:.3f})",
+            ax=axes[1]
+        )
+
+    axes[0].plot([0, 1], [0, 1], 'grey', linestyle='--', label='Aléatoire')
+    axes[0].set_title("Courbes ROC")
+    axes[0].legend(loc='lower right')
+
+    prevalence = y_test.mean()
+    axes[1].axhline(y=prevalence, color='grey', linestyle='--',
+                    label=f'Prévalence ({prevalence:.1%})')
+    axes[1].set_title("Courbes Précision-Rappel")
+    axes[1].legend(loc='upper right')
+
+    plt.suptitle(suptitle, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_confusion_matrices(all_eval_results, class_names, ncols=None):
+    """
+    Trace les matrices de confusion pour tous les modèles évalués.
+
+    Parameters
+    ----------
+    all_eval_results : dict
+        {model_name: {'confusion_matrix': array}}
+    class_names : list[str]
+        Noms des classes (ex: ['Reste', 'Quitte']).
+    ncols : int, optional
+        Nombre de colonnes. Par défaut = nombre de modèles.
+    """
+    n = len(all_eval_results)
+    ncols = ncols or n
+    nrows = (n + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(6 * ncols, 5 * nrows))
+    if n == 1:
+        axes = [axes]
+    else:
+        axes = np.array(axes).flatten()
+
+    for ax, (name, res) in zip(axes, all_eval_results.items()):
+        cm_df = pd.DataFrame(res['confusion_matrix'],
+                             index=class_names, columns=class_names)
+        create_heatmap(cm_df, ax, fmt='d', cmap='Blues',
+                       title=f'Matrice de confusion - {name}',
+                       xlabel='Prédit', ylabel='Réel')
+
+    # Masquer les axes inutilisés
+    for ax in axes[n:]:
+        ax.set_visible(False)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_threshold_analysis(df_thresholds):
+    """
+    Trace l'impact du seuil de classification sur precision, recall et F1.
+
+    Parameters
+    ----------
+    df_thresholds : pd.DataFrame
+        DataFrame avec colonnes 'Seuil', 'Precision', 'Recall', 'F1'.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    ax.plot(df_thresholds['Seuil'], df_thresholds['Precision'], 'b-o', label='Precision')
+    ax.plot(df_thresholds['Seuil'], df_thresholds['Recall'], 'r-o', label='Recall')
+    ax.plot(df_thresholds['Seuil'], df_thresholds['F1'], 'g-o', label='F1')
+
+    ax.set_xlabel('Seuil de classification')
+    ax.set_ylabel('Score')
+    ax.set_title('Impact du seuil sur les métriques (classe "Quitte")')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.show()
+
+
+def compare_model_versions(
+    results,
+    models,
+    metrics=None,
+    name_pattern='{model}_{version}',
+    figsize=(18, 5),
+):
+    """
+    Compare les performances de modèles entre différentes versions.
+
+    Parameters
+    ----------
+    results : dict[str, pd.DataFrame]
+        {version_name: df_results} - chaque DF indexé par nom du modèle.
+    models : list[str]
+        Noms courts des modèles (ex: ['LR', 'RF', 'XGB']).
+    metrics : list[str], optional
+        Colonnes à comparer. Défaut: ['test_pr_auc', 'test_recall', 'test_f1'].
+    name_pattern : str
+        Pattern pour retrouver l'index. Défaut: '{model}_{version}'.
+    figsize : tuple
+        Taille de la figure.
+    """
+    import matplotlib.pyplot as plt
+
+    if metrics is None:
+        metrics = ['test_pr_auc', 'test_recall', 'test_f1']
+
+    versions = list(results.keys())
+    df_combined = pd.concat(results.values())
+
+    rows = []
+    for model in models:
+        for version in versions:
+            index_key = name_pattern.format(model=model, version=version)
+            for metric in metrics:
+                label = metric.replace('test_', '').upper().replace('_', '-')
+                rows.append({
+                    'Modèle': model,
+                    'Version': version,
+                    'Métrique': label,
+                    'Score': df_combined.loc[index_key, metric],
+                })
+
+    df_comp = pd.DataFrame(rows)
+    metric_labels = [m.replace('test_', '').upper().replace('_', '-') for m in metrics]
+
+    fig, axes = plt.subplots(1, len(metrics), figsize=figsize)
+    if len(metrics) == 1:
+        axes = [axes]
+
+    title_suffix = ' vs '.join(versions)
+    for ax, metric_label in zip(axes, metric_labels):
+        subset = df_comp[df_comp['Métrique'] == metric_label]
+        create_barplot(
+            subset, ax, x='Modèle', y='Score', hue='Version',
+            title=f'{metric_label} : {title_suffix}'
+        )
+
+    plt.tight_layout()
+    plt.show()

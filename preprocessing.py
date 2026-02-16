@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from typing import Tuple, List
 from data_utils import remove_columns
 #Preprocess
@@ -30,6 +31,9 @@ def clean_sirh_data(df_sirh: pd.DataFrame) -> pd.DataFrame:
     print("\n🧹 Nettoyage du fichier SIRH...")
     df = df_sirh.copy()
     df = remove_columns(df, ['nombre_heures_travailless'])
+    
+    assert (df_sirh['annee_experience_totale'] >= df_sirh['annees_dans_l_entreprise']).all()
+    assert (df_sirh['annees_dans_le_poste_actuel'] <= df_sirh['annees_dans_l_entreprise']).all()
     
     print(f"   ✓ Nettoyage terminé. Nouvelles dimensions: {df.shape}")
     return df
@@ -125,31 +129,27 @@ def encode_categorical_features(df: pd.DataFrame) -> pd.DataFrame:
 def features_engineering(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    ##### Features temporelles et de carrière
-    # Mobilité interne (changements de poste)
-    df['mobilite_interne'] = df['annees_dans_l_entreprise'] - df['annees_dans_le_poste_actuel']
+    df['stabilite_management'] = df['annees_sous_responsable_actuel'] / (df['annees_dans_le_poste_actuel'] + 1)
 
+    df['surcharge_travail'] = df['heure_supplementaires'] * (df['frequence_deplacement'] + 1)
+    df['flag_surcharge_et_deplacement'] = (
+            (df['heure_supplementaires'] == 1) & (df['frequence_deplacement'] == 2)
+        ).astype(int)
 
-    # Âge de début de carrière
-    df['age_debut_carriere'] = df['age'] - df['annee_experience_totale']
+    df['ratio_promotion_anciennete'] = (
+        df['annees_depuis_la_derniere_promotion'] / (df['annees_dans_l_entreprise'] + 1)
+    )
 
-    # Ratio temps sous responsable actuel / temps dans le poste
-    # df['stabilite_management'] = df['annees_sous_responsable_actuel'] / (df['annees_dans_le_poste_actuel'] + 1)
-
-    #####  Features de satisfaction et engagement
-
-    # Score de satisfaction global (moyenne des satisfactions)
-    satisfaction_cols = [
+    sat_cols = [
         'satisfaction_employee_environnement',
-        'satisfaction_employee_nature_travail', 
+        'satisfaction_employee_nature_travail',
         'satisfaction_employee_equipe',
-        'satisfaction_employee_equilibre_pro_perso'
+        'satisfaction_employee_equilibre_pro_perso',
     ]
-    df['score_satisfaction_global'] = df[satisfaction_cols].mean(axis=1)
+    df['satisfaction_globale']  = df[sat_cols].sum(axis=1)
+    df['satisfaction_min']      = df[sat_cols].min(axis=1)
 
-    # Engagement formation
-    # df['engagement_formation'] = df['nb_formations_suivies'] / (df['annees_dans_l_entreprise'] + 1)
-
+    df['log_revenu']           = np.log1p(df['revenu_mensuel'])
 
     return df
 
@@ -159,11 +159,11 @@ def remove_redundant_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df = remove_columns(df, [
         'niveau_hierarchique_poste',
-        'annees_dans_l_entreprise',
-        # 'annees_dans_le_poste_actuel',
-        # 'annees_sous_responsable_actuel',
-        # 'annees_depuis_la_derniere_promotion',
-        'departement'
+        'annees_sous_responsable_actuel',
+        'annees_depuis_la_derniere_promotion',
+        'departement',
+        'heure_supplementaires',
+        'revenu_mensuel'
     ])
 
     return df

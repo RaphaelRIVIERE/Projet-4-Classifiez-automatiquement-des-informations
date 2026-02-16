@@ -1,12 +1,13 @@
 from sklearn.model_selection import cross_validate
 from sklearn.metrics import (
     classification_report, confusion_matrix,
-    average_precision_score, roc_auc_score
+    average_precision_score, roc_auc_score,
+    precision_score, recall_score, f1_score
 )
-import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import time
-
+from sklearn.model_selection import GridSearchCV
 
 def cross_validate_model(pipeline, X_train, y_train, cv, scoring):
     """
@@ -164,3 +165,209 @@ def build_comparison_df(all_cv_results=None, all_eval_results=None):
         rows.append(row)
 
     return pd.DataFrame(rows).set_index('model')
+
+
+def run_evaluation(pipelines, X_train, y_train, X_test, y_test, cv, scoring):
+    """
+    Évalue un ensemble de pipelines par validation croisée et sur le jeu de test.
+
+    Parameters
+    ----------
+    pipelines : dict[str, Pipeline]
+        {model_name: pipeline}
+    X_train, y_train : données d'entraînement
+    X_test, y_test : données de test
+    cv : cross-validation splitter
+    scoring : str ou dict
+
+    Returns
+    -------
+    all_cv_results : dict
+    all_eval_results : dict
+    df_results : pd.DataFrame
+    """
+    all_cv_results = {}
+    all_eval_results = {}
+    for name, pipeline in pipelines.items():
+        all_cv_results[name] = cross_validate_model(pipeline, X_train, y_train, cv=cv, scoring=scoring)
+        all_eval_results[name] = evaluate_model(pipeline, X_train, y_train, X_test, y_test)
+    df_results = build_comparison_df(all_cv_results=all_cv_results, all_eval_results=all_eval_results)
+    return all_cv_results, all_eval_results, df_results
+
+
+def get_summary_results(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Construit un DataFrame de synthèse lisible (mean +/- std) pour les métriques CV et test.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame indexé par nom de modèle, issu de build_comparison_df.
+
+    Returns
+    -------
+    pd.DataFrame
+        Tableau formaté avec CV et Test pour chaque métrique.
+    """
+    summary_rows = []
+    for model_name in df.index:
+        row = {'Modèle': model_name}
+        for metric in ['average_precision', 'recall', 'precision', 'f1']:
+            mean = df.loc[model_name, f'cv_test_{metric}']
+            std = df.loc[model_name, f'cv_test_{metric}_std']
+            display_name = 'PR-AUC' if metric == 'average_precision' else metric
+            row[f'CV {display_name}'] = f"{mean:.3f} ± {std:.3f}"
+            test_col = 'test_pr_auc' if metric == 'average_precision' else f'test_{metric}'
+            row[f'Test {display_name}'] = f"{df.loc[model_name, test_col]:.3f}"
+        summary_rows.append(row)
+
+    return pd.DataFrame(summary_rows).set_index('Modèle')
+
+
+def threshold_analysis(y_test, y_proba, thresholds=None):
+    """
+    Évalue precision, recall, F1 et nombre d'alertes pour différents seuils.
+
+    Parameters
+    ----------
+    y_test : array-like
+        Vraies étiquettes.
+    y_proba : array-like
+        Probabilités prédites pour la classe positive.
+    thresholds : list[float], optional
+        Seuils à tester. Par défaut [0.2, 0.3, 0.4, 0.5, 0.6].
+
+    Returns
+    -------
+    pd.DataFrame
+        Colonnes: Seuil, Precision, Recall, F1, Nb alertes.
+    """
+    if thresholds is None:
+        thresholds = [0.2, 0.3, 0.4, 0.5, 0.6]
+
+    results = []
+    for thresh in thresholds:
+        y_pred = (np.asarray(y_proba) >= thresh).astype(int)
+        results.append({
+            'Seuil': thresh,
+            'Precision': precision_score(y_test, y_pred, zero_division=0),
+            'Recall': recall_score(y_test, y_pred, zero_division=0),
+            'F1': f1_score(y_test, y_pred, zero_division=0),
+            'Nb alertes': y_pred.sum()
+        })
+
+    return pd.DataFrame(results)
+
+
+
+def fine_tune_model(
+    pipeline,
+    param_grid,
+    X_train, y_train,
+    X_test, y_test,
+    cv,
+    scoring,
+    refit,
+    n_jobs=-1,
+    verbose=1,
+):
+    """
+    Fine-tune un pipeline via GridSearchCV et retourne des résultats
+    compatibles avec run_evaluation() pour comparaison directe.
+
+    Parameters
+    ----------
+    pipeline : Pipeline
+        Pipeline contenant preprocessor + modèle.
+    param_grid : dict
+        Grille d'hyperparamètres (préfixés par le nom du step, ex: 'model__max_depth').
+    X_train, y_train : données d'entraînement
+    X_test, y_test : données de test
+    cv : cross-validation splitter
+    scoring : dict
+        Métriques d'évaluation (même dict que pour run_evaluation).
+    refit : str
+        Métrique utilisée pour sélectionner le meilleur modèle.
+    n_jobs : int
+    verbose : int
+
+    Returns
+    -------
+    dict avec :
+        - 'grid_search': objet GridSearchCV fitté
+        - 'best_params': meilleurs hyperparamètres
+        - 'best_score': meilleur score CV (métrique refit)
+        - 'best_pipeline': meilleur estimateur
+        - 'cv_results_df': DataFrame complet des résultats GridSearchCV
+        - 'eval_results': dict compatible avec evaluate_model()
+        - 'cv_results': dict compatible avec cross_validate_model()
+    """
+    start = time.time()
+
+    grid_search = GridSearchCV(
+        estimator=pipeline,
+        param_grid=param_grid,
+        scoring=scoring,
+        cv=cv,
+        refit=refit,
+        n_jobs=n_jobs,
+        verbose=verbose,
+        return_train_score=True,
+    )
+    grid_search.fit(X_train, y_train)
+
+    training_time = time.time() - start
+    best_pipeline = grid_search.best_estimator_
+
+    # Construire un cv_results compatible avec cross_validate_model()
+    # en extrayant les scores du meilleur modèle depuis GridSearchCV
+    best_idx = grid_search.best_index_
+    cv_results_raw = grid_search.cv_results_
+
+    metric_names = list(scoring.keys()) if isinstance(scoring, dict) else [scoring]
+    metrics_summary = {}
+    cv_results_compat = {}
+
+    for metric in metric_names:
+        test_mean = cv_results_raw[f'mean_test_{metric}'][best_idx]
+        test_std = cv_results_raw[f'std_test_{metric}'][best_idx]
+        train_mean = cv_results_raw.get(f'mean_train_{metric}', [None])[best_idx]
+        train_std = cv_results_raw.get(f'std_train_{metric}', [None])[best_idx]
+
+        metrics_summary[metric] = {
+            'test_mean': test_mean,
+            'test_std': test_std,
+            'train_mean': train_mean,
+            'train_std': train_std,
+        }
+
+        # Reconstituer les scores par fold pour compatibilité boxplots
+        n_splits = cv.get_n_splits()
+        cv_results_compat[f'test_{metric}'] = np.array([
+            cv_results_raw[f'split{i}_test_{metric}'][best_idx]
+            for i in range(n_splits)
+        ])
+        if f'split0_train_{metric}' in cv_results_raw:
+            cv_results_compat[f'train_{metric}'] = np.array([
+                cv_results_raw[f'split{i}_train_{metric}'][best_idx]
+                for i in range(n_splits)
+            ])
+
+    cv_output = {
+        'cv_results': cv_results_compat,
+        'training_time_sec': training_time,
+        'metrics_summary': metrics_summary,
+    }
+
+    # Évaluation test compatible avec evaluate_model()
+    eval_output = evaluate_model(best_pipeline, X_train, y_train, X_test, y_test)
+
+    return {
+        'grid_search': grid_search,
+        'best_params': grid_search.best_params_,
+        'best_score': grid_search.best_score_,
+        'best_pipeline': best_pipeline,
+        'cv_results_df': pd.DataFrame(cv_results_raw),
+        'eval_results': eval_output,
+        'cv_results': cv_output,
+    }
