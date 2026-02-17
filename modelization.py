@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import time
 from sklearn.model_selection import GridSearchCV
+from sklearn.inspection import permutation_importance
 
 def cross_validate_model(pipeline, X_train, y_train, cv, scoring):
     """
@@ -224,47 +225,54 @@ def get_summary_results(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(summary_rows).set_index('Modèle')
 
 
-def threshold_analysis(y_test, y_proba, thresholds=None):
+def aggregate_shap_by_original_feature(shap_values, transformed_names, original_names):
     """
-    Évalue precision, recall, F1 et nombre d'alertes pour différents seuils.
+    Agrège les SHAP values des colonnes transformées (post OHE) vers les
+    features originales, pour pouvoir comparer avec la permutation importance.
 
     Parameters
     ----------
-    y_test : array-like
-        Vraies étiquettes.
-    y_proba : array-like
-        Probabilités prédites pour la classe positive.
-    thresholds : list[float], optional
-        Seuils à tester. Par défaut [0.2, 0.3, 0.4, 0.5, 0.6].
+    shap_values : shap.Explanation
+        SHAP values calculées sur les données transformées.
+    transformed_names : list[str]
+        Noms des features après transformation (ex: 'poste_Manager').
+    original_names : list[str]
+        Noms des features brutes avant transformation (ex: 'poste').
 
     Returns
     -------
     pd.DataFrame
-        Colonnes: Seuil, Precision, Recall, F1, Nb alertes.
+        Colonnes: feature, mean_shap — trié par importance décroissante.
     """
-    if thresholds is None:
-        thresholds = [0.2, 0.3, 0.4, 0.5, 0.6]
+    shap_df = pd.DataFrame(shap_values.values, columns=transformed_names)
 
-    results = []
-    for thresh in thresholds:
-        y_pred = (np.asarray(y_proba) >= thresh).astype(int)
-        results.append({
-            'Seuil': thresh,
-            'Precision': precision_score(y_test, y_pred, zero_division=0),
-            'Recall': recall_score(y_test, y_pred, zero_division=0),
-            'F1': f1_score(y_test, y_pred, zero_division=0),
-            'Nb alertes': y_pred.sum()
-        })
+    # Mapper chaque colonne transformée vers la feature originale
+    mapping = {}
+    for col in transformed_names:
+        matched = False
+        for orig in original_names:
+            if col == orig or col.startswith(orig + '_'):
+                mapping[col] = orig
+                matched = True
+                break
+        if not matched:
+            mapping[col] = col
 
-    return pd.DataFrame(results)
+    shap_df.columns = [mapping[c] for c in shap_df.columns]
 
+    # Sommer les |SHAP| des colonnes issues de la même feature originale
+    agg = shap_df.abs().mean().groupby(level=0).sum().sort_values(ascending=False)
+
+    return pd.DataFrame({
+        'feature': agg.index,
+        'mean_shap': agg.values,
+    }).reset_index(drop=True)
 
 
 def fine_tune_model(
     pipeline,
     param_grid,
     X_train, y_train,
-    X_test, y_test,
     cv,
     scoring,
     refit,
@@ -272,8 +280,11 @@ def fine_tune_model(
     verbose=1,
 ):
     """
-    Fine-tune un pipeline via GridSearchCV et retourne des résultats
-    compatibles avec run_evaluation() pour comparaison directe.
+    Fine-tune un pipeline via GridSearchCV (entraînement + CV uniquement).
+
+    L'évaluation sur un jeu de test doit se faire séparément via
+    evaluate_model() ou run_evaluation(), afin d'éviter tout risque
+    de data leakage indirect.
 
     Parameters
     ----------
@@ -282,7 +293,6 @@ def fine_tune_model(
     param_grid : dict
         Grille d'hyperparamètres (préfixés par le nom du step, ex: 'model__max_depth').
     X_train, y_train : données d'entraînement
-    X_test, y_test : données de test
     cv : cross-validation splitter
     scoring : dict
         Métriques d'évaluation (même dict que pour run_evaluation).
@@ -297,9 +307,8 @@ def fine_tune_model(
         - 'grid_search': objet GridSearchCV fitté
         - 'best_params': meilleurs hyperparamètres
         - 'best_score': meilleur score CV (métrique refit)
-        - 'best_pipeline': meilleur estimateur
+        - 'best_pipeline': meilleur estimateur (déjà fitté sur X_train)
         - 'cv_results_df': DataFrame complet des résultats GridSearchCV
-        - 'eval_results': dict compatible avec evaluate_model()
         - 'cv_results': dict compatible avec cross_validate_model()
     """
     start = time.time()
@@ -359,15 +368,31 @@ def fine_tune_model(
         'metrics_summary': metrics_summary,
     }
 
-    # Évaluation test compatible avec evaluate_model()
-    eval_output = evaluate_model(best_pipeline, X_train, y_train, X_test, y_test)
-
     return {
         'grid_search': grid_search,
         'best_params': grid_search.best_params_,
         'best_score': grid_search.best_score_,
         'best_pipeline': best_pipeline,
         'cv_results_df': pd.DataFrame(cv_results_raw),
-        'eval_results': eval_output,
         'cv_results': cv_output,
     }
+
+
+
+def compute_permutation_importance(pipeline, X_test, y_test, scoring: str,
+                                   n_repeats=30, random_state=42, n_jobs=-1):
+    perm_result = permutation_importance(
+        pipeline,
+        X_test,
+        y_test,
+        scoring=scoring,
+        n_repeats=n_repeats,
+        random_state=random_state,
+        n_jobs=n_jobs
+    )
+    
+    return pd.DataFrame({
+        'feature': X_test.columns.tolist(),
+        'importance_mean': perm_result.importances_mean,
+        'importance_std': perm_result.importances_std
+    }).sort_values('importance_mean', ascending=True)

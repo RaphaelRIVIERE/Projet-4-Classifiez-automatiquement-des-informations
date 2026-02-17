@@ -321,11 +321,11 @@ def plot_metrics_comparison(df_results, ax, metric_cols=None, title=None,
     """
     if metric_cols is None:
         metric_cols = {
-            'test_precision': 'Precision',
+            'test_roc_auc': 'ROC-AUC',
+            'test_pr_auc': 'PR-AUC',
             'test_recall': 'Recall',
             'test_f1': 'F1',
-            'test_pr_auc': 'PR-AUC',
-            'test_roc_auc': 'ROC-AUC',
+            'test_precision': 'Precision',
         }
 
     rows = []
@@ -408,6 +408,51 @@ def visualize_cv_results(all_cv_results, df_all_results, metric='f1', suffix=Non
     plt.show()
     
 
+
+def create_pr_curves(all_eval_results, y_test, ax, title="Courbes Précision–Rappel"):
+    """Trace les courbes Précision–Rappel."""
+    for name, res in all_eval_results.items():
+        y_proba = res.get("y_proba")
+        if y_proba is None:
+            continue
+
+        PrecisionRecallDisplay.from_predictions(
+            y_test,
+            y_proba,
+            name=f"{name} (AP={res['pr_auc']:.3f})",
+            ax=ax
+        )
+
+    prevalence = y_test.mean()
+    ax.axhline(
+        y=prevalence,
+        linestyle="--",
+        color="grey",
+        label=f"Prévalence ({prevalence:.1%})"
+    )
+
+    ax.set_title(title)
+    ax.legend(loc="upper right")
+
+
+def create_roc_curves(all_eval_results, y_test, ax, title="Courbes ROC"):
+    """Trace les courbes ROC."""
+    for name, res in all_eval_results.items():
+        y_proba = res.get("y_proba")
+        if y_proba is None:
+            continue
+
+        RocCurveDisplay.from_predictions(
+            y_test,
+            y_proba,
+            name=f"{name} (AUC={res['roc_auc']:.3f})",
+            ax=ax
+        )
+
+    ax.plot([0, 1], [0, 1], "grey", linestyle="--", label="Aléatoire")
+
+    ax.set_title(title)
+    ax.legend(loc="lower right")
 
 
 def plot_pr_curves(all_eval_results, y_test, title="Courbes Précision–Rappel"):
@@ -549,29 +594,6 @@ def plot_confusion_matrices(all_eval_results, class_names, ncols=None):
     plt.show()
 
 
-def plot_threshold_analysis(df_thresholds):
-    """
-    Trace l'impact du seuil de classification sur precision, recall et F1.
-
-    Parameters
-    ----------
-    df_thresholds : pd.DataFrame
-        DataFrame avec colonnes 'Seuil', 'Precision', 'Recall', 'F1'.
-    """
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    ax.plot(df_thresholds['Seuil'], df_thresholds['Precision'], 'b-o', label='Precision')
-    ax.plot(df_thresholds['Seuil'], df_thresholds['Recall'], 'r-o', label='Recall')
-    ax.plot(df_thresholds['Seuil'], df_thresholds['F1'], 'g-o', label='F1')
-
-    ax.set_xlabel('Seuil de classification')
-    ax.set_ylabel('Score')
-    ax.set_title('Impact du seuil sur les métriques (classe "Quitte")')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.show()
-
-
 def compare_model_versions(
     results,
     models,
@@ -598,7 +620,9 @@ def compare_model_versions(
     import matplotlib.pyplot as plt
 
     if metrics is None:
-        metrics = ['test_pr_auc', 'test_recall', 'test_f1']
+        metrics = ['test_roc_auc', 'test_pr_auc', 'test_recall']
+		# metrics = ['test_pr_auc', 'test_recall', 'test_f1']
+
 
     versions = list(results.keys())
     df_combined = pd.concat(results.values())
@@ -633,3 +657,10 @@ def compare_model_versions(
 
     plt.tight_layout()
     plt.show()
+
+
+
+def create_barh(ax, labels, values, color='#3498db', title=None, xlabel=None, ylabel=None, grid=True):
+    """Crée un barplot horizontal simple."""
+    ax.barh(labels, values, color=color)
+    _apply_formatting(ax, title=title, xlabel=xlabel, ylabel=ylabel, grid=grid)
